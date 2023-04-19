@@ -1,0 +1,482 @@
+[프로젝트 세팅 가이드]
+
+
+[프론트]
+1. cd C:\Users\admin\Desktop\Fullstack Projects\new_farmdora
+2. npx create-next-app client
+3. cd .client
+4. npm i @reduxjs/toolkit next-redux-wrapper redux-saga react-redux axios
+5. npm i -D babel-eslint eslint-config-airbnb eslint-plugin-import eslint-plugin-react-hooks eslint-plugin-jsx-a11y
+  - 개발모드에서만 사용되는 패키지 설치
+6. /eslintrc.json 파일 내용을 아래와 같이 변경 
+--------------------------------------------eslintrc.json---------------------------------------------------
+{
+  "parser": "babel-eslint",
+  "parserOptions": {
+    "ecmaVersion": 2020,
+    "sourceType": "module",
+    "ecmaFeatures": {
+      "jsx": true
+    }
+  },
+  "env": {
+    "browser": true,
+    "node": true,
+    "es6": true
+  },
+  "extends": [
+    "airbnb"
+  ],
+  "plugins": [
+    "import",
+    "react-hooks",
+    "jsx-a11y"
+  ],
+  "rules": {
+    "jsx-a11y/label-has-associated-control": "off",
+    "jsx-a11y/anchor-is-valid": "off",
+    "no-console": "off",
+    "no-underscore-dangle": "off",
+    "react/forbid-prop-types": "off",
+    "react/jsx-filename-extension": "off",
+    "react/jsx-one-expression-per-line": "off",
+    "object-curly-newline": "off",
+    "linebreak-style": "off",
+    "no-param-reassign": "off"
+  }
+}
+------------------------------------------------------------------------------------------------------------
+
+7. npm i immer
+8. /client/src/util/produce.js 생성 및 파일 내용을 아래와 같이 작성 
+--------------------------------------------produce.js---------------------------------------------------
+import { enableES5, produce } from 'immer';
+
+export default (...args) => {
+  enableES5(); // 앱이 오래된 자바스크립트 환경(ex. 인터넷 익스플로어 or 리액트 네이티브)에서 동작해야 할 경우 필요한 옵션
+  return produce(...args);
+};
+------------------------------------------------------------------------------------------------------------
+
+9. /client/src/store/configureStore.js 생성 및 파일 내용을 아래와 같이 작성 
+--------------------------------------------configureStore.js---------------------------------------------------
+import { createWrapper } from 'next-redux-wrapper';
+import { applyMiddleware } from '@reduxjs/toolkit';
+import createSagaMiddleware from '@redux-saga/core';
+
+import reducer from './reducers';
+import rootSaga from './sagas';
+
+const configureStore = () => {
+    const sagaMiddleware = createSagaMiddleware();
+    const middlewares = [sagaMiddleware];
+    const enhancer = process.env.NODE_ENV === 'production'
+      ? compose(applyMiddleware(...middlewares))
+      : composeWithDevTools(applyMiddleware(...middlewares));
+    const store = createStore(reducer, enhancer);
+    store.sagaTask = sagaMiddleware.run(rootSaga);
+    return store;
+};
+  
+const wrapper = createWrapper(configureStore, {
+    debug: process.env.NODE_ENV === 'development',
+});
+  
+export default wrapper;
+------------------------------------------------------------------------------------------------------------
+ 
+10. /client/src/store/sagas/index.js 생성 및 파일 내용을 아래와 같이 작성 
+--------------------------------------------index.js---------------------------------------------------
+import { all, fork, call, take } from 'redux-saga/effects';
+
+import userSaga from "./userSaga";
+
+export default function* rootSaga(){
+    yield all([fork(userSaga)]);
+};
+------------------------------------------------------------------------------------------------------------
+
+11. /client/src/store/sagas/userSaga.js 생성 및 파일 내용을 아래와 같이 작성 
+--------------------------------------------userSaga.js---------------------------------------------------
+import { all, fork, put, takeLatest, call } from 'redux-saga/effects';
+import axios from 'axios';
+import {
+    LOG_IN_FAILURE,
+    LOG_IN_REQUEST,
+    LOG_IN_SUCCESS,
+    LOG_OUT_FAILURE,
+    LOG_OUT_REQUEST,
+    LOG_OUT_SUCCESS,
+    SIGN_UP_FAILURE,
+    SIGN_UP_REQUEST,
+    SIGN_UP_SUCCESS,
+  } from '../reducers/user';
+
+// put은 dispatch와 같다고 보면 된다.
+// call은 동기함수, fork는 비동기 함수 호출이다. 
+// 따라서 fork 호출은 사실상 axios.post('/api/login')을 호출하는 것과 동일하다고 볼 수 있다.
+// call은 axios.post('/api/login').then() 을 호출하는 것과 동일하다고 볼 수 있다.
+
+// while(true){yield take(~~~)}는 동기적으로 동작하지만 yield takeEvery(~~~)는 비동기로 동작한다는 차이가 있다.
+// takeLatest는 이벤트가 중복으로 들어올 때 앞의 이벤트가 종료되지 않았다면 앞의 이벤트를 없애고 마지막 이벤트만 실행하는 기능이다.
+// throttle('LOG_IN_REQUEST', logIn, 2000) 은 2초 동안 들어온 이벤트는 하나의 이벤트로 인식하는 기능이다.
+// throttle은 특수한 경우(화면 스크롤 같은 경우)에 쓰는 편이고 일반적으로 takeLatest를 많이 사용하는 편이다.
+
+// throttling : 마지막 함수가 호출된 후 일정 시간이 지나기 전에 다시 호출되지 않도록 하는 것 
+// debouncing : 연이어 호출되는 함수들 중 마지막 함수(또는 제일 처음)만 호출되도록 하는 것
+
+
+function logInAPI(data) {
+    return axios.post('/user/login', data);
+}
+  
+function* logIn(action) {
+    try {
+      const result = yield call(logInAPI, action.data);
+      yield put({
+        type: LOG_IN_SUCCESS,
+        data: result.data,
+      });
+    } catch (err) {
+      console.error(err);
+      yield put({
+        type: LOG_IN_FAILURE,
+        error: err.response.data,
+      });
+    }
+}
+  
+function logOutAPI() {
+    return axios.post('/user/logout');
+}
+  
+function* logOut() {
+    try {
+      yield call(logOutAPI);
+      yield put({
+        type: LOG_OUT_SUCCESS,
+      });
+    } catch (err) {
+      console.error(err);
+      yield put({
+        type: LOG_OUT_FAILURE,
+        error: err.response.data,
+      });
+    }
+}
+  
+function signUpAPI(data) {
+    return axios.post('/user/signup', data);
+}
+  
+function* signUp(action) {
+    try {
+      const result = yield call(signUpAPI, action.data);
+      console.log(result);
+      yield put({
+        type: SIGN_UP_SUCCESS,
+      });
+    } catch (err) {
+      console.error(err);
+      yield put({
+        type: SIGN_UP_FAILURE,
+        error: err.response.data,
+      });
+    }
+}
+
+// LOG_IN_REQUEST의 event listener 역할을 함
+// LOG_IN_REQUEST가 들어오면 saga와 reducer가 모두 작동한다.
+function* watchLogIn() {
+    yield takeLatest(LOG_IN_REQUEST, logIn);
+}
+  
+function* watchLogOut() {
+    yield takeLatest(LOG_OUT_REQUEST, logOut);
+}
+  
+function* watchSignUp() {
+    yield takeLatest(SIGN_UP_REQUEST, signUp);
+}
+
+export default function* userSaga() {
+    yield all([
+      fork(watchLogIn),
+      fork(watchLogOut),
+      fork(watchSignUp),
+    ]);
+}
+------------------------------------------------------------------------------------------------------------
+
+12. /client/src/store/reducers/index.js 생성 및 파일 내용을 아래와 같이 작성 
+--------------------------------------------index.js---------------------------------------------------
+import { HYDRATE } from 'next-redux-wrapper';
+import { combineReducers } from 'redux';
+
+import user from './user';
+// import post from './post';
+
+// (이전상태, 액션) => 다음상태
+const rootReducer = (state, action) => {
+  switch (action.type) {
+    case HYDRATE:
+      return action.payload;
+    default: {
+      const combinedReducer = combineReducers({
+        user,
+        // post,
+      });
+      return combinedReducer(state, action);
+    }
+  }
+};
+
+export default rootReducer;
+------------------------------------------------------------------------------------------------------------
+
+13. /client/src/store/reducers/user.js 생성 및 파일 내용을 아래와 같이 작성 
+--------------------------------------------user.js---------------------------------------------------
+import produce from '../util/produce';
+
+export const initialState = {
+  logInLoading: false, // 로그인 시도중
+  logInDone: false,
+  logInError: null,
+  logOutLoading: false, // 로그아웃 시도중
+  logOutDone: false,
+  logOutError: null,
+  signUpLoading: false, // 회원가입 시도중
+  signUpDone: false,
+  signUpError: null,
+  me: null,
+};
+
+// 액션 명이 오타가 나지 않도록 변수 형태로 만듦
+// 다른 파일에서도 액션 명을 가져다 쓸 수 있도록 export 함
+export const LOG_IN_REQUEST = 'LOG_IN_REQUEST';
+export const LOG_IN_SUCCESS = 'LOG_IN_SUCCESS';
+export const LOG_IN_FAILURE = 'LOG_IN_FAILURE';
+
+export const LOG_OUT_REQUEST = 'LOG_OUT_REQUEST';
+export const LOG_OUT_SUCCESS = 'LOG_OUT_SUCCESS';
+export const LOG_OUT_FAILURE = 'LOG_OUT_FAILURE';
+
+export const SIGN_UP_REQUEST = 'SIGN_UP_REQUEST';
+export const SIGN_UP_SUCCESS = 'SIGN_UP_SUCCESS';
+export const SIGN_UP_FAILURE = 'SIGN_UP_FAILURE';
+
+
+export const loginRequestAction = (data) => ({  // LOG_IN_REQUEST가 들어오면 saga와 reducer가 모두 작동한다.
+  type: LOG_IN_REQUEST,
+  data,
+});
+
+export const logoutRequestAction = () => ({
+  type: LOG_OUT_REQUEST,
+});
+
+// immer의 produce를 사용하면 자동으로 reducer의 불변성을 지켜준다.
+// immer를 사용하지 않을 경우 state의 불변성을 지키기 위해 더 많은 코드를 작성해야 한다.
+const reducer = (state = initialState, action) => produce(state, (draft) => {
+  switch (action.type) {
+    case LOG_IN_REQUEST:            // LOG_IN_REQUEST가 들어오면 saga와 reducer가 모두 작동한다.
+      draft.logInLoading = true;
+      draft.logInError = null;
+      draft.logInDone = false;
+      break;
+    case LOG_IN_SUCCESS:
+      draft.logInLoading = false;
+      draft.me = action.data;
+      draft.logInDone = true;
+      break;
+    case LOG_IN_FAILURE:
+      draft.logInLoading = false;
+      draft.logInError = action.error;
+      break;
+    case LOG_OUT_REQUEST:
+      draft.logOutLoading = true;
+      draft.logOutError = null;
+      draft.logOutDone = false;
+      break;
+    case LOG_OUT_SUCCESS:
+      draft.logOutLoading = false;
+      draft.logOutDone = true;
+      draft.me = null;
+      break;
+    case LOG_OUT_FAILURE:
+      draft.logOutLoading = false;
+      draft.logOutError = action.error;
+      break;
+    case SIGN_UP_REQUEST:
+      draft.signUpLoading = true;
+      draft.signUpError = null;
+      draft.signUpDone = false;
+      break;
+    case SIGN_UP_SUCCESS:
+      draft.signUpLoading = false;
+      draft.signUpDone = true;
+      break;
+    case SIGN_UP_FAILURE:
+      draft.signUpLoading = false;
+      draft.signUpError = action.error;
+      break;
+    default:
+      break;
+  }
+});
+
+export default reducer;
+------------------------------------------------------------------------------------------------------------
+
+[백엔드]
+
+(사전에 설치되어야 할 패키지)
+npm install -g express-generator (express-generator 전역 설치)
+npm install -g sequelize-cli (sequelize-cli 전역 설치)
+
+1. cd C:\Users\admin\Desktop\Fullstack Projects\new_farmdora
+2. express ./server --view=pug  (express가 글로벌로 설치되어 있을 경우에 가능 - 참고로 VScode 터미널에서는 관리자 권한이 없어서 실행이 안될 수 있음)
+3. cd .server
+4. npm i mysql2, sequelize
+5. sequelize init (sequelize-cli가 글로벌로 설치되어 있을 경우에 가능 - 참고로 VScode 터미널에서는 관리자 권한이 없어서 실행이 안될 수 있음)
+6. npm i winston, winston-daily-rotate-file, express-async-errors
+7. /server/config/ 경로에 logger.js 파일 생성 (logger.js 코드는 아래 내용 대로 작성)
+
+--------------------------------------------logger.js---------------------------------------------------
+const winston = require('winston');
+const winstonDaily = require('winston-daily-rotate-file');
+const process = require('process');
+ 
+const { combine, timestamp, label, printf } = winston.format;
+ 
+//* 로그 파일 저장 경로 → 루트 경로/logs 폴더
+const logDir = `${process.cwd()}/logs`;
+ 
+//* log 출력 포맷 정의 함수
+const logFormat = printf(({ level, message, label, timestamp }) => {
+   return `${timestamp} [${label}] ${level}: ${message}`; // 날짜 [시스템이름] 로그레벨 메세지
+});
+ 
+/*
+ * Log Level
+ * error: 0, warn: 1, info: 2, http: 3, verbose: 4, debug: 5, silly: 6
+ */
+const logger = winston.createLogger({
+   //* 로그 출력 형식 정의
+   format: combine(
+      timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+      label({ label: 'DomaeTalk' }), // 어플리케이션 이름
+    //   label({ label: __dirname }), // 어플리케이션 이름
+    //   label({ label: __filename }), // 어플리케이션 이름
+      logFormat, // log 출력 포맷
+      //? format: combine() 에서 정의한 timestamp와 label 형식값이 logFormat에 들어가서 정의되게 된다. level이나 message는 콘솔에서 자동 정의
+   ),
+   //* 실제 로그를 어떻게 기록을 한 것인가 정의
+   transports: [
+      //* info 레벨 로그를 저장할 파일 설정 (info: 2 보다 높은 error: 0 와 warn: 1 로그들도 자동 포함해서 저장)
+      new winstonDaily({
+         level: 'info', // info 레벨에선
+         datePattern: 'YYYY-MM-DD', // 파일 날짜 형식
+         dirname: logDir, // 파일 경로
+         filename: `%DATE%.log`, // 파일 이름
+         maxFiles: 30, // 최근 30일치 로그 파일을 남김
+         zippedArchive: true,
+      }),
+      //* error 레벨 로그를 저장할 파일 설정 (info에 자동 포함되지만 일부러 따로 빼서 설정)
+      new winstonDaily({
+         level: 'error', // error 레벨에선
+         datePattern: 'YYYY-MM-DD',
+         dirname: logDir + '/error', // /logs/error 하위에 저장
+         filename: `%DATE%.error.log`, // 에러 로그는 2020-05-28.error.log 형식으로 저장
+         maxFiles: 30,
+         zippedArchive: true,
+      }),
+   ],
+   //* uncaughtException 발생시 파일 설정
+   exceptionHandlers: [
+      new winstonDaily({
+         level: 'error',
+         datePattern: 'YYYY-MM-DD',
+         dirname: logDir,
+         filename: `%DATE%.exception.log`,
+         maxFiles: 30,
+         zippedArchive: true,
+      }),
+   ],
+});
+ 
+//* Production 환경이 아닌, 개발 환경일 경우 파일 들어가서 일일히 로그 확인하기 번거로우니까 화면에서 바로 찍게 설정 (로그 파일은 여전히 생성됨)
+if (process.env.NODE_ENV !== 'production') {
+   logger.add(
+      new winston.transports.Console({
+         format: winston.format.combine(
+            winston.format.colorize(), // 색깔 넣어서 출력
+            winston.format.simple(), // `${info.level}: ${info.message} JSON.stringify({ ...rest })` 포맷으로 출력
+         ),
+      }),
+   );
+}
+ 
+module.exports = logger;
+------------------------------------------------------------------------------------------------------------
+
+8. /server/app.js의 파일 내용을 아래와 같이 변경 
+--------------------------------------------app.js---------------------------------------------------
+const createError = require('http-errors');
+const express = require('express');
+const path = require('path');
+const cookieParser = require('cookie-parser');
+// const logger = require('morgan');
+const logger = require('./config/logger');
+const { sequelize } = require('./models');
+require('express-async-errors'); // controller에서 async로 메소드 구현할 때 express-async-errors를 사용하지 않을 경우 에러가 발생했을 때 앱이 종료될 수도 있다. 
+
+const indexRouter = require('./routes/index');
+const usersRouter = require('./routes/users');
+
+const app = express();
+
+logger.info(`${path.basename(__filename)} [INIT] Farmdora Server Start`);
+
+// view engine setup
+app.set('views', path.join(__dirname, 'views'));
+app.set('view engine', 'pug');
+
+// app.use(logger('dev'));
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+app.use(cookieParser());
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.use('/', indexRouter);
+app.use('/users', usersRouter);
+
+// catch 404 and forward to error handler
+app.use(function(req, res, next) {
+  next(createError(404));
+});
+
+// error handler
+app.use(function(err, req, res, next) {
+  // set locals, only providing error in development
+  res.locals.message = err.message;
+  res.locals.error = req.app.get('env') === 'development' ? err : {};
+
+  // render the error page
+  res.status(err.status || 500);
+  res.render('error');
+});
+
+
+sequelize.sync({ alter: true })
+.then(() => {
+  logger.info(`${path.basename(__filename)} [INIT] DataBase Connected`);
+})
+.catch((err) => {
+  logger.info(err);
+});
+
+module.exports = app;
+------------------------------------------------------------------------------------------------------------
+
+9. /server/controller 폴더 생성
